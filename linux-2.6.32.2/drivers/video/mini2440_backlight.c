@@ -1,0 +1,136 @@
+/**
+ * mini2440 backlight
+ *
+ */
+
+#include <linux/errno.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/input.h>
+#include <linux/init.h>
+#include <linux/serio.h>
+#include <linux/delay.h>
+#include <linux/clk.h>
+#include <linux/miscdevice.h>
+#include <linux/gpio.h>
+
+#include <asm/io.h>
+#include <asm/irq.h>
+#include <asm/uaccess.h>
+#include <mach/regs-clock.h>
+#include <plat/regs-timer.h>
+
+#include <mach/regs-gpio.h>
+#include <linux/cdev.h>
+
+
+#undef DEBUG
+//#define DEBUG
+
+#ifdef DEBUG
+#define DPRINTK(x...) {printk(__FNCTION__"(%d):", __LINE__);printk(##x);}
+#else
+#define DPRINTK(x...) (void)(0)
+#endif
+
+/* device_name */
+#define DEVICE_NAME "backlight"
+
+/* a var store the backlight state */
+static unsigned int bl_state;
+
+static inline void set_bl(int state)
+{
+	bl_state = !!state; //两次翻转，只是将state改为bool型
+	//write io
+	s3c2410_gpio_setpin(S3C2410_GPG(4), bl_state);
+}
+
+static inline int get_bl(void)
+{
+	return bl_state;
+}
+
+static ssize_t dev_write(struct file* filp, const char* buffer, size_t count, loff_t *ppos)
+{
+	unsigned char ch;
+	int ret;
+
+	//no data need write
+	if (count == 0)
+	{
+		return count;
+	}
+
+	ret = copy_from_user(&ch, buffer, sizeof(ch)) ? -EFAULT:0;
+	
+	if (ret) 
+	{
+		return ret;
+	}
+
+	ch &= 0x01;
+	set_bl(ch);
+
+	return count;
+}
+
+static ssize_t dev_read(struct file* filp, char* buffer, size_t count, loff_t *ppos)
+{
+	int ret;
+	unsigned char str[]={'0', '1'};
+
+	if (count == 0)
+	{
+		return 0;
+	}
+
+	ret = copy_to_user(buffer, str+get_bl(), sizeof(unsigned char)) ? -EFAULT : 0;
+
+	if (ret)
+	{
+		return ret;
+	}
+
+	return sizeof(unsigned char);
+}
+
+
+static struct file_operations dev_fops = {
+	owner: THIS_MODULE,
+	read:	dev_read,
+	write:	dev_write,
+};
+
+static struct miscdevice misc = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = DEVICE_NAME,
+	.fops = &dev_fops,
+};
+
+static int __init dev_init(void)
+{
+	int ret;
+
+	ret = misc_register(&misc);
+	printk(DEVICE_NAME"\tinitialized\n");
+
+	s3c2410_gpio_cfgpin(S3C2410_GPG(4), S3C2410_GPIO_OUTPUT);
+
+	//open backlight when startup
+	set_bl(1);
+
+	return ret;
+}
+
+static void __exit dev_exit(void)
+{
+	misc_deregister(&misc);
+}
+
+module_init(dev_init);
+module_exit(dev_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("FriendlyARM Inc");
